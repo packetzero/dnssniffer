@@ -1,11 +1,19 @@
-# dnsparser - Simple DNS payload parser in C++
+# dnssniffer - Simple DNS payload parser in C++
 
-# Build
-osx/linux:
+# Build Linux/MacOS
+
 ```sh build.sh```
-Windows:
-```build.bat```
 
-# Test
-osx/linux:
-```sh test.sh```
+# Run from command-line
+
+```
+./platform/*/Release/dnssniffer
+```
+
+
+# MacOS: Running/Debugging using XCode
+
+Open the .xcodeproj in platform/*/
+
+
+
