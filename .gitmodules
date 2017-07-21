@@ -1,0 +1,3 @@
+[submodule "dnsparser"]
+	path = dnsparser
+	url = git@github.com:packetzero/dnsparser.git
