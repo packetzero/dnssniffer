@@ -4,6 +4,10 @@ Simple IPV4, no support for Ethernet VLAN tagging.
 Depends on BPF filtering of 'UDP port 53'.
 Logs each response record to stdout:
 
+Usage:  dnssniffer <ifname>
+
+Example Usage:  dnssniffer en0
+
 Example output:
 
  Packets truncated at 300 bytes
@@ -19,7 +23,7 @@ Example output:
  131.253.14.38    c1.microsoft.com||c.msn.com||c.msn.com.nsatc.net
  204.79.197.200   c.bing.com||c-bing-com.a-0001.a-msedge.net||.a-0001.a-msedge.net
  13.107.21.200    c.bing.com||c-bing-com.a-0001.a-msedge.net||.a-0001.a-msedge.net
- 
+
 */
 #include<pcap.h>
 #include<stdio.h>
@@ -32,6 +36,7 @@ Example output:
 #include <arpa/inet.h>  // ntop
 
 std::string addr2text ( const in_addr& Addr );
+std::string addr2text ( const in6_addr& Addr );
 
 DnsParser *gDnsParser=0L;
 int snaplen = 300;  // want to test for partial payloads
@@ -43,18 +48,21 @@ class MyDnsParserListener : public DnsParserListener
 {
 public:
   //----------------------------------------------------------------------------
-  // Have an ip to hostname mapping
+  // Received IPv4 DNS response record
   //----------------------------------------------------------------------------
   virtual void onDnsRec(in_addr addr, std::string name, std::string path)
   {
     std::string addrStr = addr2text(addr);
-    printf("%-16s %s\n", addrStr.c_str(), path.c_str()); // name is first part of path
+    printf("%-20s %s\n", addrStr.c_str(), path.c_str()); // name is first part of path
   }
 
   //----------------------------------------------------------------------------
-  // TODO: add IPv6 parse
+  // Received IPv6 DNS response record
   //----------------------------------------------------------------------------
-  virtual void onDnsRec(in6_addr addr, std::string name, std::string path) {  }
+  virtual void onDnsRec(in6_addr addr, std::string name, std::string path) {
+    std::string addrStr = addr2text(addr);
+    printf("%-20s %s\n", addrStr.c_str(), path.c_str()); // name is first part of path
+  }
 };
 
 //----------------------------------------------------------------------------
@@ -104,15 +112,19 @@ void process_packet(uint8_t *args, const struct pcap_pkthdr *header, const uint8
 //----------------------------------------------------------------------------
 // main
 //----------------------------------------------------------------------------
-int main()
+int main(int argc, char *argv[])
 {
   MyDnsParserListener *dnsRecPrinter = new MyDnsParserListener();
   gDnsParser = DnsParserNew(dnsRecPrinter);
   pcap_t *handle; //Handle of the device that shall be sniffed
   struct bpf_program fp;
   char filter_exp[] = "udp port 53";
-  char devname[128]="en0";  // TODO: get from command-line
+  char devname[128]="en0";
   char errbuf[100];
+
+  // pull devname from command-line arg if present
+
+  if (argc > 1 && strlen(argv[1]) < sizeof(devname)) strcpy(devname, argv[1]);
 
   printf("Packets truncated at %d bytes\n", snaplen);
 
@@ -123,13 +135,14 @@ int main()
   if (handle == NULL)
   {
     fprintf(stderr, "Couldn't open device %s : %s\n" , devname , errbuf);
+    if (argc <=1 ) printf("Hint: Specify network device (e.g. 'eth1') in first command-line argument.\n\n");
     exit(1);
   }
-  
+
   printf(".. success\n");
 
   // Compile BPF filter
-  
+
   if ((pcap_compile(handle, &fp, filter_exp, 1, PCAP_NETMASK_UNKNOWN)) == -1)
   {
     printf("compile error block entered\n");
@@ -137,7 +150,7 @@ int main()
     pcap_geterr(handle));
     return (2);
   }
-  
+
   // Attached to open handle
 
   if (pcap_setfilter(handle, &fp) == -1)
@@ -167,4 +180,13 @@ std::string addr2text ( const in_addr& Addr )
   if ( NULL != inet_ntop ( AF_INET, &Addr, IPv4AddressAsString, sizeof(IPv4AddressAsString) ) )
   strPropText = IPv4AddressAsString;
   return strPropText;
+}
+
+std::string addr2text ( const in6_addr& Addr )
+{
+ std::string strPropText="errIPV6";
+ char IPv6AddressAsString[INET6_ADDRSTRLEN];	//buffer needs 46 characters min
+ if ( NULL != inet_ntop ( AF_INET6, &Addr, IPv6AddressAsString, sizeof(IPv6AddressAsString) ) )
+   strPropText = IPv6AddressAsString;
+ return strPropText;
 }
