@@ -1,4 +1,4 @@
-# dnssniffer - Simple DNS payload parser in C++
+# dnssniffer - Simple DNS packet sniffer in C++
 This is an example program to demonstrate use of [dnsparser](https://github.com/packetzero/dnsparser/) library.
 Uses libpcap, and runs on MacOS and Linux.  This is not designed to be run on a DNS server.
 
