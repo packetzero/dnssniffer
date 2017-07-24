@@ -35,11 +35,24 @@ Example output:
 #include "nethdrs.h"
 #include <arpa/inet.h>  // ntop
 
+#include <unistd.h> // write
+#include <fcntl.h> // open
+
 std::string addr2text ( const in_addr& Addr );
 std::string addr2text ( const in6_addr& Addr );
 
 DnsParser *gDnsParser=0L;
 int snaplen = 300;  // want to test for partial payloads
+
+// Option to save packets to file for viewing by wireshark, tcpdump:
+
+bool gIsPcapOutEnabled=false; // set to true to have pcap file for comparison
+const unsigned char GENERIC_PCAP_FILE_HEADER_BYTES[]={
+  0xd4,0xc3,0xb2,0xa1,0x02,0x00,0x04,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+  0x48,0x00,0x00,0x00,0x01,0x00,0x00,0x00
+};
+const char *PCAP_OUT_FILENAME="dnssniff.pcap";
+int gPcapOutfile=0;
 
 //----------------------------------------------------------------------------
 // implementation of DnsParserListener, so we can receive callbacks
@@ -64,6 +77,20 @@ public:
     printf("%-20s %s\n", addrStr.c_str(), path.c_str()); // name is first part of path
   }
 };
+
+//----------------------------------------------------------------------------
+// write packet and header to pcap file
+//----------------------------------------------------------------------------
+void save_packet(int fd, const struct pcap_pkthdr *header, const uint8_t *buffer)
+{
+  // can't just write header, as runtime timestamps are usually larger than
+  // standard 4-byte ints.
+  write(fd, &header->ts.tv_sec, 4);
+  write(fd, &header->ts.tv_usec, 4);
+  write(fd, &header->len, 4);
+  write(fd, &header->caplen, 4);
+  write(fd, buffer, header->caplen);
+}
 
 //----------------------------------------------------------------------------
 // handle a UDP packet
@@ -102,7 +129,8 @@ void process_packet(uint8_t *args, const struct pcap_pkthdr *header, const uint8
   switch (iph->ip_p) //Check the Protocol and do accordingly...
   {
     case 17: //UDP Protocol
-    process_udp_packet(buffer , header->caplen);
+      if (gPcapOutfile > 0) save_packet(gPcapOutfile, header, buffer);
+      process_udp_packet(buffer , header->caplen);
     break;
     default: //Some Other Protocol like ARP etc.
     break;
@@ -162,6 +190,18 @@ int main(int argc, char *argv[])
 
   printf("BPF filter: %s\n", filter_exp);
   printf("\n");
+
+  if (gIsPcapOutEnabled)
+  {
+    gPcapOutfile = open(PCAP_OUT_FILENAME, O_CREAT | O_TRUNC | O_RDWR);
+    if (gPcapOutfile > 0) {
+      printf("Saving packets to file '%s'\n", PCAP_OUT_FILENAME);
+      write(gPcapOutfile, GENERIC_PCAP_FILE_HEADER_BYTES, sizeof(GENERIC_PCAP_FILE_HEADER_BYTES));
+    } else {
+      printf("ERROR: unable to open PCAP outfile for writing '%s'\n", PCAP_OUT_FILENAME);
+    }
+  }
+
 
   // loop
 
