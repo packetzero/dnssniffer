@@ -38,21 +38,60 @@ Example output:
 #include <unistd.h> // write
 #include <fcntl.h> // open
 
+#include <getopt.h> // command-line args - not on windows
+
 std::string addr2text ( const in_addr& Addr );
 std::string addr2text ( const in6_addr& Addr );
 
 DnsParser *gDnsParser=0L;
-int snaplen = 300;  // want to test for partial payloads
+int snaplen = 500;  // want to test for partial payloads
+
+int gIsPathEnabled=1;
+int gIgnoreCnames=0;
+int gNoV4=0;
+int gNoV6=0;
 
 // Option to save packets to file for viewing by wireshark, tcpdump:
 
-bool gIsPcapOutEnabled=false; // set to true to have pcap file for comparison
+int gIsPcapOutEnabled=0; // set to true to have pcap file for comparison
+
 const unsigned char GENERIC_PCAP_FILE_HEADER_BYTES[]={
   0xd4,0xc3,0xb2,0xa1,0x02,0x00,0x04,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
   0x48,0x00,0x00,0x00,0x01,0x00,0x00,0x00
 };
 const char *PCAP_OUT_FILENAME="dnssniff.pcap";
 int gPcapOutfile=0;
+
+// command-line argument definitions
+static struct option long_options[] =
+  {
+    /* These options set a flag. */
+    {"nopath",   no_argument,       &gIsPathEnabled, 0},
+    {"nocnames", no_argument,       &gIgnoreCnames, 1},
+    {"capture",   no_argument,       &gIsPcapOutEnabled, 2},
+    {"no6", no_argument, &gNoV6, 3},
+    {"no4", no_argument, &gNoV4, 4},
+    {"help", no_argument, NULL,'h'},
+    {"trunc", 1, NULL, 't'},
+    {0, 0, 0, 0}
+  };
+
+  #define NUM_OPTIONS 7
+
+void usage()
+{
+  const char *str=
+"usage dnssniffer <options> <ifname>\n\n"
+"options:\n"
+" --nopath    Do not keep track of CNAME path\n"
+" --nocnames  Skip CNAME parsing altogether\n"
+" --capture   Capture packets\n"
+" --no6       Do not print ANSWER records containing IPV6 addresses\n"
+" --no4       Do not print ANSWER records containing IPV4 addresses\n"
+" --trunc <N> Truncate packets to N bytes, Where 60 < N < 1500. Defaults to 500\n";
+;
+  printf("%s\n", str);
+}
 
 //----------------------------------------------------------------------------
 // implementation of DnsParserListener, so we can receive callbacks
@@ -65,16 +104,18 @@ public:
   //----------------------------------------------------------------------------
   virtual void onDnsRec(in_addr addr, std::string name, std::string path)
   {
+    if (gNoV4) return;
     std::string addrStr = addr2text(addr);
-    printf("%-20s %s\n", addrStr.c_str(), path.c_str()); // name is first part of path
+    printf("%-20s %s\n", addrStr.c_str(), path.length() == 0 ? name.c_str() : path.c_str()); // name is first part of path
   }
 
   //----------------------------------------------------------------------------
   // Received IPv6 DNS response record
   //----------------------------------------------------------------------------
   virtual void onDnsRec(in6_addr addr, std::string name, std::string path) {
+    if (gNoV6) return;
     std::string addrStr = addr2text(addr);
-    printf("%-20s %s\n", addrStr.c_str(), path.c_str()); // name is first part of path
+    printf("%-20s %s\n", addrStr.c_str(), path.length() == 0 ? name.c_str() : path.c_str()); // name is first part of path
   }
 };
 
@@ -142,19 +183,51 @@ void process_packet(uint8_t *args, const struct pcap_pkthdr *header, const uint8
 //----------------------------------------------------------------------------
 int main(int argc, char *argv[])
 {
+  char devname[128]="";
+  int optchar, option_index = 0;
+
+  if (argc == 1) { usage(); exit(0); }
+
+  // command-line args
+
+  while ( (optchar = getopt_long (argc, argv, "ht:", long_options, &option_index) != -1)) {
+    if (option_index >= 0 && option_index < NUM_OPTIONS) {
+      if (option_index == 5) { usage(); exit(0); }
+      if (option_index == 6) {
+        int n = atoi(optarg);
+        if (n < 60 || n > 1500) { printf("Invalid trunc argument '%s'\n", optarg); exit(2); }
+        snaplen = n;
+      }
+    } else {
+      switch (optchar) {
+        case 'h':
+          usage(); exit(0);
+        default:
+          exit(1);
+      }
+    }
+  }
+
+  // look for non-options, first of which will be network interface name
+
+  if (optind < argc)
+      strcpy(devname, argv[argc-1]);
+
+  if (strlen(devname) == 0) { usage(); exit(0); }
+
+
+  // create parser and listener
+
   MyDnsParserListener *dnsRecPrinter = new MyDnsParserListener();
-  gDnsParser = DnsParserNew(dnsRecPrinter);
+  gDnsParser = DnsParserNew(dnsRecPrinter, gIsPathEnabled, gIgnoreCnames);
   pcap_t *handle; //Handle of the device that shall be sniffed
   struct bpf_program fp;
   char filter_exp[] = "udp port 53";
-  char devname[128]="en0";
   char errbuf[100];
 
-  // pull devname from command-line arg if present
-
-  if (argc > 1 && strlen(argv[1]) < sizeof(devname)) strcpy(devname, argv[1]);
-
   printf("Packets truncated at %d bytes\n", snaplen);
+  if (gIgnoreCnames) printf("--nocnames option used, will ignore CNAME records\n");
+  if (0 == gIsPathEnabled) printf("--nopath option used, CNAME paths omitted\n");
 
   //Open the device for sniffing
   printf("Opening device %s for sniffing .." , devname);
@@ -206,6 +279,8 @@ int main(int argc, char *argv[])
   // loop
 
   pcap_loop(handle , -1 , process_packet , NULL);
+
+  // TODO: capture sigint/sigkill, cleanly close capture file and pcap handle
 
   return 0;
 }
